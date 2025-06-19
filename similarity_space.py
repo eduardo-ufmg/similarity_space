@@ -1,22 +1,29 @@
 import numpy as np
-from scipy.sparse import csr_matrix, csc_matrix
+from scipy.sparse import csc_matrix, csr_matrix
 
-def similarity_space(X: csr_matrix, y: np.ndarray) -> np.ndarray:
+
+def similarity_space(
+    X: csr_matrix, y: np.ndarray, classes: np.ndarray | None = None
+) -> np.ndarray:
     """
     Calculates the similarity space matrix from a kernel matrix and labels.
 
     This function transforms a kernel matrix `X` into a similarity space `Q`.
     The transformation is performed by aggregating the kernel values for each
     sample based on the class labels of the reference samples. This approach is
-    highly efficient, leveraging sparse matrix multiplication to avoid Python loops
-    and minimize memory overhead.
+    highly efficient, leveraging sparse matrix multiplication.
 
     Args:
         X (csr_matrix): A sparse matrix of shape (n_samples, n_references).
-                        The element X_ij is the value of an RBF kernel evaluated
-                        from the reference sample `x_j` to the evaluated sample `x_i`.
+                        The element X_ij is the kernel value from reference
+                        sample `x_j` to evaluated sample `x_i`.
         y (np.ndarray): An array of shape (n_references,) containing the labels
                         for the reference samples `x_j`.
+        classes (np.ndarray, optional): A sorted array of unique class labels
+                        to use for the output space. If provided, the output
+                        matrix `Q` will have a column for each class in this
+                        array. If None (default), the classes are inferred
+                        from the unique labels present in `y`.
 
     Returns:
         np.ndarray: A dense matrix `Q` of shape (n_samples, n_classes).
@@ -28,48 +35,63 @@ def similarity_space(X: csr_matrix, y: np.ndarray) -> np.ndarray:
         raise TypeError(f"Input X must be a scipy.sparse.csr_matrix, but got {type(X)}")
     if not isinstance(y, np.ndarray):
         raise TypeError(f"Input y must be a numpy.ndarray, but got {type(y)}")
-    
-    n_samples, n_references = X.shape #type: ignore
-    
+
+    n_samples, n_references = X.shape  # type: ignore
+
     if n_references != len(y):
         raise ValueError(
             f"Shape mismatch: X.shape[1] ({n_references}) must equal len(y) ({len(y)})"
         )
 
     # --- Step 1: Map labels to integer indices ---
-    # `np.unique` with `return_inverse=True` is perfect for this.
-    # `classes` will store the unique labels in sorted order.
-    # `class_indices` will be an array where each element is the integer index
-    # corresponding to the label in the original `y` array.
-    classes, class_indices = np.unique(y, return_inverse=True)
+    if classes is None:
+        # Infer classes from the provided labels `y`.
+        # `classes` will be sorted, and `class_indices` will map each `y`
+        # element to its index in the new `classes` array.
+        classes, class_indices = np.unique(y, return_inverse=True)
+    else:
+        # Use the provided `classes` array.
+        # This is useful when `y` might not contain all possible classes.
+        if not isinstance(classes, np.ndarray):
+            raise TypeError(
+                f"Input 'classes' must be a numpy.ndarray, but got {type(classes)}"
+            )
+        if not np.all(classes[:-1] < classes[1:]):
+            raise ValueError("The provided 'classes' array must be sorted and unique.")
+
+        # Check that all labels in `y` are actually present in `classes`.
+        unique_y_labels = np.unique(y)
+        if not np.all(np.isin(unique_y_labels, classes)):
+            missing = unique_y_labels[~np.isin(unique_y_labels, classes)]
+            raise ValueError(
+                f"Labels {list(missing)} from y are not in the provided classes array."
+            )
+
+        # Map each label in `y` to its index in the `classes` array.
+        # `np.searchsorted` is highly efficient for this mapping.
+        class_indices = np.searchsorted(classes, y)
+
     n_classes = len(classes)
 
     # --- Step 2: Create a sparse "indicator" matrix ---
     # The core of the efficient solution is to create a matrix, Y_indicator,
-    # of shape (n_references, n_classes) that "selects" the right columns of X
-    # for summation. An entry (j, c) in this matrix is 1 if reference sample j
-    # belongs to class c, and 0 otherwise. This is essentially a sparse one-hot
-    # encoding of the labels in `y`.
-    
-    # We provide the data and the (row, column) coordinates for the non-zero elements.
+    # of shape (n_references, n_classes) that "selects" the right columns.
+    # An entry (j, c) in this matrix is 1 if reference sample j belongs to
+    # class c, and 0 otherwise.
     row_indices = np.arange(n_references)
     col_indices = class_indices
-    data = np.ones(n_references, dtype=X.dtype)  # Use X's dtype for compatibility
+    data = np.ones(n_references, dtype=X.dtype)
 
     # We build the matrix in Compressed Sparse Column (CSC) format because
-    # multiplication of a CSR matrix by a CSC matrix is a highly optimized operation.
+    # multiplication of a CSR matrix (X) by a CSC matrix is highly optimized.
     Y_indicator = csc_matrix(
-        (data, (row_indices, col_indices)),
-        shape=(n_references, n_classes)
+        (data, (row_indices, col_indices)), shape=(n_references, n_classes)
     )
 
     # --- Step 3: Perform matrix multiplication ---
-    # The desired output Q is simply the product of X and Y_indicator.
-    # The element (i, c) of the resulting matrix Q is calculated as:
-    # Q_ic = sum_{j=0 to n_references-1} (X_ij * Y_indicator_jc)
-    # Since Y_indicator_jc is 1 only when y_j belongs to class c, this simplifies to:
-    # Q_ic = sum(X_ij) for all j where y_j == c
-    # This is precisely the required computation.
+    # The desired output Q is the product of X and Y_indicator.
+    # The element (i, c) of Q is the sum of similarities from sample `i`
+    # to all reference samples belonging to class `c`.
     Q_sparse = X @ Y_indicator
 
     # --- Step 4: Convert result to a dense array ---
