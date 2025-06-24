@@ -1,3 +1,5 @@
+from typing import cast
+
 import numpy as np
 from scipy.sparse import csc_matrix, csr_matrix
 
@@ -97,4 +99,4 @@ def similarity_space(
     # --- Step 4: Convert result to a dense array ---
     # The operation results in a sparse matrix. We convert it to a dense
     # numpy array as specified by the function's return type.
-    return Q_sparse.toarray()
+    return cast(csc_matrix, Q_sparse).toarray()
