@@ -15,7 +15,7 @@ def similarity_space(
     sample based on the class labels of the reference samples. This approach is
     highly efficient, leveraging sparse matrix multiplication.
 
-    Args:
+    Parameters:
         X (csr_matrix): A sparse matrix of shape (n_samples, n_references).
                         The element X_ij is the kernel value from reference
                         sample `x_j` to evaluated sample `x_i`.
