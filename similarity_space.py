@@ -5,18 +5,18 @@ from scipy.sparse import csc_matrix, csr_matrix
 
 
 def similarity_space(
-    X: csr_matrix, y: np.ndarray, classes: np.ndarray | None = None
+    K: csr_matrix, y: np.ndarray, classes: np.ndarray | None = None
 ) -> np.ndarray:
     """
     Calculates the similarity space matrix from a kernel matrix and labels.
 
-    This function transforms a kernel matrix `X` into a similarity space `Q`.
+    This function transforms a kernel matrix `K` into a similarity space `Q`.
     The transformation is performed by aggregating the kernel values for each
     sample based on the class labels of the reference samples. This approach is
     highly efficient, leveraging sparse matrix multiplication.
 
     Parameters:
-        X (csr_matrix): A sparse matrix of shape (n_samples, n_references).
+        K (csr_matrix): A sparse matrix of shape (n_samples, n_references).
                         The element X_ij is the kernel value from reference
                         sample `x_j` to evaluated sample `x_i`.
         y (np.ndarray): An array of shape (n_references,) containing the labels
@@ -33,16 +33,16 @@ def similarity_space(
                     reference samples belonging to class `c` to the sample `x_i`.
     """
     # --- Input Validation ---
-    if not isinstance(X, csr_matrix):
-        raise TypeError(f"Input X must be a scipy.sparse.csr_matrix, but got {type(X)}")
+    if not isinstance(K, csr_matrix):
+        raise TypeError(f"Input K must be a scipy.sparse.csr_matrix, but got {type(K)}")
     if not isinstance(y, np.ndarray):
         raise TypeError(f"Input y must be a numpy.ndarray, but got {type(y)}")
 
-    n_samples, n_references = X.shape  # type: ignore
+    n_samples, n_references = K.shape  # type: ignore
 
     if n_references != len(y):
         raise ValueError(
-            f"Shape mismatch: X.shape[1] ({n_references}) must equal len(y) ({len(y)})"
+            f"Shape mismatch: K.shape[1] ({n_references}) must equal len(y) ({len(y)})"
         )
 
     # --- Step 1: Map labels to integer indices ---
@@ -82,19 +82,19 @@ def similarity_space(
     # class c, and 0 otherwise.
     row_indices = np.arange(n_references)
     col_indices = class_indices
-    data = np.ones(n_references, dtype=X.dtype)
+    data = np.ones(n_references, dtype=K.dtype)
 
     # We build the matrix in Compressed Sparse Column (CSC) format because
-    # multiplication of a CSR matrix (X) by a CSC matrix is highly optimized.
+    # multiplication of a CSR matrix (K) by a CSC matrix is highly optimized.
     Y_indicator = csc_matrix(
         (data, (row_indices, col_indices)), shape=(n_references, n_classes)
     )
 
     # --- Step 3: Perform matrix multiplication ---
-    # The desired output Q is the product of X and Y_indicator.
+    # The desired output Q is the product of K and Y_indicator.
     # The element (i, c) of Q is the sum of similarities from sample `i`
     # to all reference samples belonging to class `c`.
-    Q_sparse = X @ Y_indicator
+    Q_sparse = K @ Y_indicator
 
     # --- Step 4: Convert result to a dense array ---
     # The operation results in a sparse matrix. We convert it to a dense
